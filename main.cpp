@@ -7,9 +7,8 @@
 #include <iostream>
 #include <string>
 #include <cmath>
-#include "updater.h"
+#include "crypto.h"
 
-// Simple helper function to load an image into a OpenGL texture with common settings
 bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_width, int* out_height)
 {
     int image_width = 0;
@@ -29,9 +28,6 @@ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_wid
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); 
 
-#if defined(GL_UNPACK_ROW_LENGTH) && !defined(__EMSCRIPTEN__)
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-#endif
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
     stbi_image_free(image_data);
 
@@ -41,20 +37,34 @@ bool LoadTextureFromFile(const char* filename, GLuint* out_texture, int* out_wid
     return true;
 }
 
+// State
+bool is_activated = false;
+bool show_activation_modal = false;
+bool show_toast = false;
+double toast_time = 0.0;
+char license_key_input[512] = "";
+std::string user_hwid = "";
+std::string toast_message = "";
+
+void CheckLicense() {
+    std::string saved_sig = LoadLicense();
+    if (!saved_sig.empty() && VerifyLicense(user_hwid, saved_sig)) {
+        is_activated = true;
+    }
+}
+
 int main(int, char**)
 {
     if (!glfwInit()) return 1;
 
-    const char* glsl_version = "#version 130";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
     
     int window_width = 1000;
     int window_height = 600;
-    GLFWwindow* window = glfwCreateWindow(window_width, window_height, "Loader", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(window_width, window_height, "Advanced Loader", NULL, NULL);
     if (window == NULL) return 1;
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1); 
@@ -65,91 +75,51 @@ int main(int, char**)
     
     ImGui::StyleColorsDark();
 
+    // Style adjustments
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 12.0f;
+    style.FrameRounding = 8.0f;
+    style.PopupRounding = 12.0f;
+    style.ItemSpacing = ImVec2(10, 10);
+    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.94f);
+    style.Colors[ImGuiCol_PopupBg] = ImVec4(0.10f, 0.10f, 0.10f, 0.98f);
+    style.Colors[ImGuiCol_Button] = ImVec4(0.15f, 0.15f, 0.15f, 1.0f);
+    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.20f, 0.20f, 0.20f, 1.0f);
+    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.25f, 0.25f, 0.25f, 1.0f);
+    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.0f);
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init(glsl_version);
+    ImGui_ImplOpenGL3_Init("#version 130");
 
     ImFontConfig font_cfg;
-    font_cfg.OversampleH = 2;
-    font_cfg.OversampleV = 2;
-    font_cfg.PixelSnapH = true;
+    font_cfg.OversampleH = 2; font_cfg.OversampleV = 2; font_cfg.PixelSnapH = true;
+    static const ImWchar ranges[] = { 0x0020, 0x00FF, 0x0100, 0x017F, 0x0400, 0x044F, 0 };
     
-    static const ImWchar ranges[] = {
-        0x0020, 0x00FF, // Basic Latin
-        0x0100, 0x017F, // Latin Extended-A
-        0x0400, 0x044F, // Cyrillic
-        0,
-    };
-    
-    ImFont* font_regular_large = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 20.0f, &font_cfg, ranges);
-    ImFont* font_bold = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 32.0f, &font_cfg, ranges);
-    ImFont* font_regular_small = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &font_cfg, ranges);
+    ImFont* font_regular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &font_cfg, ranges);
+    ImFont* font_bold_large = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 48.0f, &font_cfg, ranges);
+    ImFont* font_bold = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeuib.ttf", 16.0f, &font_cfg, ranges);
+    ImFont* font_small = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 13.0f, &font_cfg, ranges);
 
     GLuint bg_texture = 0;
     int bg_width = 0, bg_height = 0;
-    LoadTextureFromFile("bg.png", &bg_texture, &bg_width, &bg_height);
+    LoadTextureFromFile("game_bg.png", &bg_texture, &bg_width, &bg_height);
+
+    // Get HWID and check local license
+    user_hwid = GetHWID();
+    CopyToClipboard(user_hwid);
+    CheckLicense();
 
     bool is_dragging = false;
-    int win_start_x = 0, win_start_y = 0;
-
-    // DOWNLOAD STATE
-    DownloadProgress dl_progress;
-    // We will download a 10MB test file from tele2 for demonstration of the real progress
-    StartDownloadAsync("http://speedtest.tele2.net/10MB.zip", "test_file.zip", &dl_progress);
-
-    float visual_progress_ratio = 0.0f;
-    double start_time = glfwGetTime();
-
-    // FPS / Speed calculation
-    double last_time = glfwGetTime();
-    uint64_t last_bytes = 0;
-    float current_speed_mb = 0.0f;
 
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
 
-        // Drag window logic (simplified)
         double mouse_x, mouse_y;
         glfwGetCursorPos(window, &mouse_x, &mouse_y);
         if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-            if (!is_dragging && mouse_y < 100 && mouse_x < window_width - 150) {
-                is_dragging = true;
-            }
-        } else {
-            is_dragging = false;
-        }
-        if (is_dragging) {
-            int xpos, ypos;
-            glfwGetWindowPos(window, &xpos, &ypos);
-            // simple drag - requires better win32 integration for smoothness, skipping for UI focus
-        }
-
-        // Calculate download speed and progress
-        double current_time = glfwGetTime();
-        if (current_time - last_time >= 0.5) { // Update speed every 0.5s
-            uint64_t current_bytes = dl_progress.bytes_downloaded;
-            float bytes_diff = (float)(current_bytes - last_bytes);
-            current_speed_mb = (bytes_diff / 1024.0f / 1024.0f) / (current_time - last_time);
-            last_time = current_time;
-            last_bytes = current_bytes;
-        }
-
-        float actual_progress_ratio = (float)dl_progress.bytes_downloaded / (float)dl_progress.total_bytes;
-        if (actual_progress_ratio > 1.0f) actual_progress_ratio = 1.0f;
-        if (dl_progress.is_finished) actual_progress_ratio = 1.0f;
-
-        // ANIMATIONS
-        float dt = io.DeltaTime;
-        
-        // 1. Fade in globally over 1.5 seconds
-        float global_alpha = (float)(current_time - start_time) / 1.5f;
-        if (global_alpha > 1.0f) global_alpha = 1.0f;
-
-        // 2. Smooth progress bar lerp
-        visual_progress_ratio += (actual_progress_ratio - visual_progress_ratio) * 5.0f * dt;
-        
-        // 3. Pulsing effect
-        float pulse = (sin(current_time * 4.0f) + 1.0f) * 0.5f; // 0 to 1
+            if (!is_dragging && mouse_y < 50 && mouse_x < window_width - 150) is_dragging = true;
+        } else is_dragging = false;
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -161,80 +131,141 @@ int main(int, char**)
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         
-        ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
-                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | 
-                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
-        
-        ImGui::Begin("Main", nullptr, window_flags);
+        ImGui::Begin("Main", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
-        ImVec2 p_min = ImGui::GetCursorScreenPos();
-        ImVec2 p_max = ImVec2(p_min.x + window_width, p_min.y + window_height);
+        // 1. Sidebar (Dark vertical strip on the left)
+        float sidebar_width = 80.0f;
+        draw_list->AddRectFilled(ImVec2(0,0), ImVec2(sidebar_width, window_height), IM_COL32(20,20,20,255), 12.0f, ImDrawFlags_RoundCornersLeft);
         
-        // Alpha color helper
-        auto applyAlpha = [&](ImU32 col, float alpha) -> ImU32 {
-            int a = (int)(((col >> 24) & 0xFF) * alpha);
-            return (col & 0x00FFFFFF) | (a << 24);
-        };
-
-        // Draw background
-        draw_list->AddImageRounded((void*)(intptr_t)bg_texture, p_min, p_max, ImVec2(0,0), ImVec2(1,1), applyAlpha(IM_COL32(255,255,255,255), global_alpha), 15.0f);
-        
-        draw_list->AddRectFilledMultiColor(
-            ImVec2(p_min.x, p_max.y - 300), p_max,
-            applyAlpha(IM_COL32(0,0,0,0), global_alpha), applyAlpha(IM_COL32(0,0,0,0), global_alpha),
-            applyAlpha(IM_COL32(0,0,0,220), global_alpha), applyAlpha(IM_COL32(0,0,0,220), global_alpha)
-        );
-        
-        // Controls
-        float btn_size = 30.0f;
-        ImVec2 close_pos(window_width - btn_size - 10, 10);
-        ImGui::SetCursorPos(close_pos);
-        if (ImGui::InvisibleButton("Close", ImVec2(btn_size, btn_size))) glfwSetWindowShouldClose(window, GLFW_TRUE);
-        bool close_hovered = ImGui::IsItemHovered();
-        draw_list->AddText(font_regular_large, 20.0f, ImVec2(close_pos.x + 8, close_pos.y + 2), applyAlpha(close_hovered ? IM_COL32(255,100,100,255) : IM_COL32(200,200,200,255), global_alpha), "X");
-
-        // Texts
-        float text_x = 60.0f;
-        float title_y = 400.0f;
-        
-        std::string title_text = dl_progress.is_finished ? (dl_progress.is_error ? u8"Güncelleme Hatası" : u8"Güncelleme Tamamlandı") : u8"Başlatıcı güncellemesi gerçekleşiyor";
-        
-        // Add subtle pulse to title if downloading
-        float title_alpha = dl_progress.is_finished ? 1.0f : (0.8f + 0.2f * pulse);
-        
-        draw_list->AddText(font_bold, 32.0f, ImVec2(text_x, title_y), applyAlpha(IM_COL32(255, 255, 255, 255), global_alpha * title_alpha), title_text.c_str());
-        
-        float subtitle_y = title_y + 45.0f;
-        std::string subtitle = dl_progress.is_finished ? (dl_progress.is_error ? dl_progress.error_message : u8"Oyuna giriş yapabilirsiniz.") : u8"Olası sorunları önlemek için Başlatıcıyı kapatmayın.\nBir hata olduğunu düşünüyorsanız, teknik destek ile iletişime geçmelisiniz.";
-        draw_list->AddText(font_regular_large, 20.0f, ImVec2(text_x, subtitle_y), applyAlpha(IM_COL32(230, 230, 230, 255), global_alpha), subtitle.c_str());
-
-        // Progress text
-        char progress_buf[256];
-        if (dl_progress.is_finished) {
-            snprintf(progress_buf, sizeof(progress_buf), "100%%");
+        // 2. Main Content Area Background
+        if (bg_texture) {
+            draw_list->AddImageRounded((void*)(intptr_t)bg_texture, ImVec2(sidebar_width, 0), ImVec2(window_width, window_height), ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,255), 12.0f, ImDrawFlags_RoundCornersRight);
+            // Dark gradient over image
+            draw_list->AddRectFilledMultiColor(ImVec2(sidebar_width, 0), ImVec2(window_width, window_height), IM_COL32(0,0,0,150), IM_COL32(0,0,0,50), IM_COL32(0,0,0,200), IM_COL32(0,0,0,240));
         } else {
-            float mb_down = dl_progress.bytes_downloaded / 1024.0f / 1024.0f;
-            float mb_total = dl_progress.total_bytes / 1024.0f / 1024.0f;
-            snprintf(progress_buf, sizeof(progress_buf), "%.2f MB/s    %.2f MB из %.2f MB", current_speed_mb, mb_down, mb_total);
+            draw_list->AddRectFilled(ImVec2(sidebar_width, 0), ImVec2(window_width, window_height), IM_COL32(30,30,30,255), 12.0f, ImDrawFlags_RoundCornersRight);
+        }
+
+        // Window Controls
+        ImGui::SetCursorPos(ImVec2(window_width - 40, 10));
+        if (ImGui::Button("X", ImVec2(30,30))) glfwSetWindowShouldClose(window, GLFW_TRUE);
+        ImGui::SetCursorPos(ImVec2(window_width - 80, 10));
+        if (ImGui::Button("_", ImVec2(30,30))) glfwIconifyWindow(window);
+
+        // Sidebar Icons (Simulated)
+        for(int i=0; i<5; i++) {
+            ImGui::SetCursorPos(ImVec2(20, 150 + i * 60));
+            ImGui::PushID(i);
+            ImGui::PushStyleColor(ImGuiCol_Button, i==1 ? ImVec4(0.9f, 0.8f, 0.5f, 0.2f) : ImVec4(0.1f, 0.1f, 0.1f, 0.5f));
+            if (ImGui::Button("O", ImVec2(40,40))) {} // Placeholder for icon
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+
+        // Content
+        float content_x = sidebar_width + 40.0f;
+        ImGui::SetCursorPos(ImVec2(content_x, 250));
+        ImGui::PushFont(font_bold_large);
+        ImGui::Text("Warface - Lite");
+        ImGui::PopFont();
+
+        ImGui::SetCursorPos(ImVec2(content_x, 320));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.8f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.9f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.7f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::PushFont(font_bold);
+
+        if (is_activated) {
+            if (ImGui::Button(u8"  Oyun  ", ImVec2(200, 45))) {
+                // Play game action
+            }
+        } else {
+            if (ImGui::Button(u8"Anahtar\u0131 etkinle\u015ftir", ImVec2(250, 45))) {
+                show_activation_modal = true;
+            }
         }
         
-        float text_width = font_regular_small->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, progress_buf).x;
-        float progress_y = 540.0f;
-        draw_list->AddText(font_regular_small, 15.0f, ImVec2(window_width - text_width - 60.0f, progress_y - 20.0f), applyAlpha(IM_COL32(200, 200, 200, 255), global_alpha), progress_buf);
+        ImGui::PopFont();
+        ImGui::PopStyleColor(4);
 
-        // Progress bar
-        float pb_width = window_width - 120.0f;
-        float pb_height = 16.0f;
-        float pb_x = 60.0f;
+        ImGui::SameLine();
+        ImGui::Button(" i ", ImVec2(45, 45));
+
+        // System Requirements Panel
+        float panel_y = window_height - 200.0f;
+        draw_list->AddRectFilled(ImVec2(content_x, panel_y), ImVec2(window_width - 40, window_height - 20), IM_COL32(20,20,20,200), 16.0f);
         
-        // Background track
-        draw_list->AddRectFilled(ImVec2(pb_x, progress_y), ImVec2(pb_x + pb_width, progress_y + pb_height), applyAlpha(IM_COL32(80, 80, 80, 200), global_alpha), pb_height * 0.5f);
-        
-        // Foreground fill with glow/pulse effect on the color
-        ImU32 fill_color = dl_progress.is_finished ? IM_COL32(100, 255, 100, 255) : IM_COL32(255 - (int)(50*pulse), 255 - (int)(50*pulse), 255, 255);
-        if (visual_progress_ratio > 0.01f) {
-            draw_list->AddRectFilled(ImVec2(pb_x, progress_y), ImVec2(pb_x + pb_width * visual_progress_ratio, progress_y + pb_height), applyAlpha(fill_color, global_alpha), pb_height * 0.5f);
+        ImGui::SetCursorPos(ImVec2(content_x + 20, panel_y - 30));
+        ImGui::PushFont(font_bold);
+        ImGui::Text("Sistem Gereksinimleri");
+        ImGui::PopFont();
+
+        ImGui::SetCursorPos(ImVec2(content_x + 20, panel_y + 20));
+        ImGui::PushFont(font_small);
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Tavsiye edilir");
+        ImGui::SetCursorPos(ImVec2(content_x + 20, panel_y + 50));
+        ImGui::Text("Islemci\t\t\t\tCore i3-530 / AMD Athlon II X3");
+        ImGui::SetCursorPos(ImVec2(content_x + 20, panel_y + 80));
+        ImGui::Text("Hafiza \t\t\t\t4 GB");
+        ImGui::SetCursorPos(ImVec2(content_x + 20, panel_y + 110));
+        ImGui::Text("Ekran karti\t\t\tGeForce 250 GTS / Radeon HD 4850");
+        ImGui::PopFont();
+
+        // Activation Modal
+        if (show_activation_modal) {
+            ImGui::OpenPopup(u8"Ürün aktivasyonu");
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(400, 250));
+        if (ImGui::BeginPopupModal(u8"Ürün aktivasyonu", &show_activation_modal, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 20);
+            ImGui::Text(u8"Anahtarı girin (HWID'niz panoya kopyalandı):");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##key", license_key_input, IM_ARRAYSIZE(license_key_input));
+
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 30);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.8f, 0.5f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+            
+            if (ImGui::Button(u8"ETKİNLEŞTİR", ImVec2(-1, 40))) {
+                if (VerifyLicense(user_hwid, license_key_input)) {
+                    is_activated = true;
+                    SaveLicense(license_key_input);
+                    show_activation_modal = false;
+                    show_toast = true;
+                    toast_time = glfwGetTime();
+                    toast_message = u8"Aboneliğinizi başarıyla etkinleştirdiniz";
+                } else {
+                    show_toast = true;
+                    toast_time = glfwGetTime();
+                    toast_message = u8"Geçersiz Anahtar!";
+                }
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::EndPopup();
+        }
+
+        // Toast Notification
+        if (show_toast) {
+            double current_time = glfwGetTime();
+            if (current_time - toast_time < 3.0) {
+                float alpha = 1.0f;
+                if (current_time - toast_time > 2.5) alpha = (3.0f - (current_time - toast_time)) / 0.5f;
+                
+                ImGui::SetNextWindowPos(ImVec2(window_width / 2.0f, window_height - 60.0f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                ImGui::SetNextWindowBgAlpha(alpha * 0.9f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 20.0f);
+                ImGui::Begin("Toast", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, alpha));
+                ImGui::Text("%s", toast_message.c_str());
+                ImGui::PopStyleColor();
+                ImGui::End();
+                ImGui::PopStyleVar();
+            } else {
+                show_toast = false;
+            }
         }
 
         ImGui::End();
