@@ -30,6 +30,7 @@ endif()
 # Create executable
 add_executable(loader_imgui
     main.cpp
+    updater.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_demo.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -45,6 +46,6 @@ target_include_directories(loader_imgui PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(loader_imgui PRIVATE glfw opengl32 gdi32)
+target_link_libraries(loader_imgui PRIVATE glfw opengl32 gdi32 winhttp)
 
 # Ensure copy of assets if needed, but since it runs in the same folder we can just use relative paths.
