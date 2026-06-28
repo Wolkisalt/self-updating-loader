@@ -1,0 +1,13 @@
+{
+  "loader_version": "1.0.0",
+  "loader_url": "https://github.com/Wolkisalt/self-updating-loader/releases/download/v1.0.1/loader_imgui.exe",
+  "game_version": "1.0.0",
+  "game_files": [
+    {
+      "path": "game/data.pak",
+      "url": "https://raw.githubusercontent.com/Wolkisalt/self-updating-loader/main/game_assets/data.pak",
+      "size": 587563008,
+      "hash": "dummy_hash"
+    }
+  ]
+}
